@@ -37,7 +37,47 @@ namespace GPIBKeithleyCurrentMeasurement
             }
         }
 
-        public async Task StartContinuousReadAsync(int durationSeconds = 10)
+
+        public async Task StartContinuousReadAsync()
+        {
+            if (!_isConnected || _session == null)
+            {
+                throw new InvalidOperationException("Not connected to GPIB device");
+            }
+
+            _isMeasuring = true; // Ensure measurement state is set
+
+            try
+            {
+                while (_isMeasuring) // Run indefinitely until stopped
+                {
+                    try
+                    {
+                        // Send read command
+                        await Task.Run(() => _session.RawIO.Write(":READ?\n"));
+
+                        // Read response asynchronously
+                        string measurement = await Task.Run(() => _session.RawIO.ReadString());
+
+                        // Raise event with measurement
+                        MeasurementReceived?.Invoke(this, measurement);
+                    }
+                    catch (Exception ex)
+                    {
+                        ErrorOccurred?.Invoke(this, ex);
+                        break; // Stop on error
+                    }
+
+                    await Task.Delay(10); // Prevent CPU overload (adjust as needed)
+                }
+            }
+            finally
+            {
+                _isMeasuring = false; // Ensure proper cleanup when stopping
+            }
+        }
+
+        public async Task StartContinuousReadAsync(int durationSeconds)
         {
             if (!_isConnected || _session == null)
             {
