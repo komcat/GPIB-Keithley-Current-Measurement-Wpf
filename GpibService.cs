@@ -29,6 +29,7 @@ namespace GPIBKeithleyCurrentMeasurement
                 var rmSession = new ResourceManager();
                 _session = (MessageBasedSession)rmSession.Open(_resourceName);
                 _isConnected = true;
+                await Task.Delay(2000);
             }
             catch (Exception ex)
             {
