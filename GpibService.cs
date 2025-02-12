@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Threading.Tasks;
 using NationalInstruments.Visa;
+using Serilog;
 
 namespace GPIBKeithleyCurrentMeasurement
 {
     public class GpibService : IDisposable
     {
         private MessageBasedSession _session;
+        
         private readonly string _resourceName;
         private bool _isConnected;
         private bool _isMeasuring;
@@ -16,7 +18,7 @@ namespace GPIBKeithleyCurrentMeasurement
 
         public event EventHandler<string> MeasurementReceived;
         public event EventHandler<Exception> ErrorOccurred;
-
+        
         public GpibService(string resourceName = "GPIB0::1::INSTR")
         {
             _resourceName = resourceName;
@@ -46,38 +48,88 @@ namespace GPIBKeithleyCurrentMeasurement
                 throw new InvalidOperationException("Not connected to GPIB device");
             }
 
-            _isMeasuring = true; // Ensure measurement state is set
+            _isMeasuring = true;
+            int consecutiveErrorCount = 0;
+            const int MAX_CONSECUTIVE_ERRORS = 5;
+            const int BASE_RETRY_DELAY_MS = 100;
+            const int MAX_RETRY_DELAY_MS = 5000;
 
             try
             {
-                while (_isMeasuring) // Run indefinitely until stopped
+                while (_isMeasuring)
                 {
                     try
                     {
                         // Send read command
                         await Task.Run(() => _session.RawIO.Write(":READ?\n"));
 
-                        // Read response asynchronously
-                        string measurement = await Task.Run(() => _session.RawIO.ReadString());
+                        // Read response with timeout handling
+                        string measurement = await ReadWithTimeoutAsync();
+
+                        // Reset error count on successful read
+                        consecutiveErrorCount = 0;
 
                         // Raise event with measurement
                         MeasurementReceived?.Invoke(this, measurement);
                     }
                     catch (Exception ex)
                     {
+                        consecutiveErrorCount++;
+
+                        // Calculate exponential backoff delay
+                        int retryDelay = Math.Min(
+                            BASE_RETRY_DELAY_MS * (int)Math.Pow(2, consecutiveErrorCount),
+                            MAX_RETRY_DELAY_MS
+                        );
+
+                        // Raise error event
                         ErrorOccurred?.Invoke(this, ex);
-                        break; // Stop on error
+
+                        // Stop if max consecutive errors reached
+                        if (consecutiveErrorCount >= MAX_CONSECUTIVE_ERRORS)
+                        {
+                            Log.Error($"Max consecutive errors reached. Stopping measurement. Last error: {ex.Message}");
+                            break;
+                        }
+
+                        // Wait before retrying
+                        await Task.Delay(retryDelay);
                     }
 
-                    await Task.Delay(10); // Prevent CPU overload (adjust as needed)
+                    // Prevent tight looping
+                    await Task.Delay(10);
                 }
             }
             finally
             {
-                _isMeasuring = false; // Ensure proper cleanup when stopping
+                _isMeasuring = false;
             }
         }
 
+        private async Task<string> ReadWithTimeoutAsync(int timeoutMs = 1000)
+        {
+            using var cts = new CancellationTokenSource(timeoutMs);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    try
+                    {
+                        return _session.RawIO.ReadString();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Read operation failed: {ex.Message}");
+                        throw;
+                    }
+                }, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warning("Read operation timed out");
+                throw new TimeoutException("Read operation timed out");
+            }
+        }
         public async Task StartContinuousReadAsync(int durationSeconds)
         {
             if (!_isConnected || _session == null)
