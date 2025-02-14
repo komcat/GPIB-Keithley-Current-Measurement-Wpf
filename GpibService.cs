@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Threading.Tasks;
 using NationalInstruments.Visa;
 using Serilog;
@@ -108,27 +109,70 @@ namespace GPIBKeithleyCurrentMeasurement
 
         private async Task<string> ReadWithTimeoutAsync(int timeoutMs = 1000)
         {
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
+            const int MAX_RETRIES = 3;
+            int retryCount = 0;
+
+            while (retryCount < MAX_RETRIES)
             {
-                return await Task.Run(() =>
+                using var cts = new CancellationTokenSource(timeoutMs);
+                try
                 {
-                    try
+                    return await Task.Run(() =>
                     {
-                        return _session.RawIO.ReadString();
-                    }
-                    catch (Exception ex)
+                        try
+                        {
+                            return _session.RawIO.ReadString();
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warning($"Read operation failed: {ex.Message}");
+                            throw;
+                        }
+                    }, cts.Token);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException || ex is IOException)
+                {
+                    retryCount++;
+                    Log.Warning($"Attempt {retryCount} failed: {ex.Message}");
+
+                    if (retryCount < MAX_RETRIES)
                     {
-                        Log.Warning($"Read operation failed: {ex.Message}");
-                        throw;
+                        Log.Information($"Attempting reconnection, try {retryCount + 1} of {MAX_RETRIES}");
+
+                        try
+                        {
+                            // Disconnect current session
+                            _session?.Dispose();
+                            _session = null;
+                            _isConnected = false;
+
+                            // Wait before reconnecting
+                            await Task.Delay(1000);
+
+                            // Reconnect
+                            var rmSession = new ResourceManager();
+                            _session = (MessageBasedSession)rmSession.Open(_resourceName);
+                            _isConnected = true;
+
+                            // Additional wait after reconnection
+                            await Task.Delay(500);
+
+                            Log.Information($"Successfully reconnected on attempt {retryCount + 1}");
+                        }
+                        catch (Exception reconnectEx)
+                        {
+                            Log.Error($"Reconnection attempt {retryCount + 1} failed: {reconnectEx.Message}");
+                        }
                     }
-                }, cts.Token);
+                    else
+                    {
+                        Log.Error("Max retry attempts reached");
+                        throw new TimeoutException($"Read operation failed after {MAX_RETRIES} reconnection attempts");
+                    }
+                }
             }
-            catch (OperationCanceledException)
-            {
-                Log.Warning("Read operation timed out");
-                throw new TimeoutException("Read operation timed out");
-            }
+
+            throw new TimeoutException($"Read operation failed after {MAX_RETRIES} reconnection attempts");
         }
         public async Task StartContinuousReadAsync(int durationSeconds)
         {
