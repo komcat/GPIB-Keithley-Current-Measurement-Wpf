@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:GPIBKeithleyCurrentMeasurement"
         mc:Ignorable="d"
         Title="GPIB Measurement" Height="450" Width="800">
+    
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -28,5 +29,7 @@
         <StatusBar Grid.Row="2" Height="25">
             <TextBlock x:Name="StatusText" Text="Disconnected"/>
         </StatusBar>
+
+        
     </Grid>
 </Window>

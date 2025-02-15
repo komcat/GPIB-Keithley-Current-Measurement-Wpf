@@ -1,4 +1,5 @@
-﻿using System;
+﻿using GPIBKeithleyCurrentMeasurement.Settings;
+using System;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -18,6 +19,7 @@ namespace GPIBKeithleyCurrentMeasurement
             _gpibService.ErrorOccurred += OnErrorOccurred;
 
             _stopwatch = new System.Diagnostics.Stopwatch();
+            
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -133,5 +135,7 @@ namespace GPIBKeithleyCurrentMeasurement
             _gpibService.Dispose();
             base.OnClosing(e);
         }
+
+        
     }
 }
