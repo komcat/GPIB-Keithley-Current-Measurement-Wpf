@@ -13,7 +13,7 @@ namespace GPIBKeithleyCurrentMeasurement
         private readonly string _resourceName;
         private bool _isConnected;
         private bool _isMeasuring;
-        private const int MAX_RETRY_ATTEMPTS = 3;
+        private const int MAX_RETRY_ATTEMPTS = 10;
         private const int CONNECTION_TIMEOUT_MS = 5000;
         private const int VALIDATION_DELAY_MS = 250;
         public bool IsConnected => _isConnected;
