@@ -13,7 +13,9 @@ namespace GPIBKeithleyCurrentMeasurement
         private readonly string _resourceName;
         private bool _isConnected;
         private bool _isMeasuring;
-
+        private const int MAX_RETRY_ATTEMPTS = 3;
+        private const int CONNECTION_TIMEOUT_MS = 5000;
+        private const int VALIDATION_DELAY_MS = 250;
         public bool IsConnected => _isConnected;
         public bool IsMeasuring => _isMeasuring;
 
@@ -25,22 +27,122 @@ namespace GPIBKeithleyCurrentMeasurement
             _resourceName = resourceName;
         }
 
-        public async Task ConnectAsync()
+        private async Task<bool> ValidateConnectionAsync()
         {
             try
             {
-                var rmSession = new ResourceManager();
-                _session = (MessageBasedSession)rmSession.Open(_resourceName);
-                _isConnected = true;
-                await Task.Delay(250);
+                // Add a small delay to ensure device is ready
+                await Task.Delay(VALIDATION_DELAY_MS);
+
+                // Try to perform a basic communication test with proper timeout handling
+                using var cts = new CancellationTokenSource(CONNECTION_TIMEOUT_MS);
+
+                return await Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Store original timeout
+                        int originalTimeout = _session.TimeoutMilliseconds;
+
+                        try
+                        {
+                            // Set a shorter timeout for the validation
+                            _session.TimeoutMilliseconds = 2000; // 2 seconds timeout for validation
+
+                            // Send identification query
+                            _session.RawIO.Write("*IDN?\n");
+                            string response = _session.RawIO.ReadString().Trim();
+
+                            // Check if we got a valid response
+                            if (string.IsNullOrEmpty(response))
+                            {
+                                Log.Warning("Device returned empty response during validation");
+                                return false;
+                            }
+
+                            Log.Information($"Device identification: {response}");
+                            return true;
+                        }
+                        finally
+                        {
+                            // Restore original timeout
+                            _session.TimeoutMilliseconds = originalTimeout;
+                        }
+                    }
+                    catch (Ivi.Visa.IOTimeoutException ex)
+                    {
+                        Log.Warning($"Timeout during device validation: {ex.Message}");
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Error during device validation: {ex.Message}");
+                        return false;
+                    }
+                }, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warning("Validation operation was cancelled due to timeout");
+                return false;
             }
             catch (Exception ex)
             {
-                _isConnected = false;
-                throw new Exception($"Failed to connect to GPIB device: {ex.Message}");
+                Log.Warning($"Unexpected error during validation: {ex.Message}");
+                return false;
             }
         }
+        public async Task ConnectAsync()
+        {
+            int attemptCount = 0;
+            Exception lastException = null;
 
+            while (attemptCount < MAX_RETRY_ATTEMPTS)
+            {
+                try
+                {
+                    attemptCount++;
+                    Log.Information($"Attempting to connect to GPIB device (Attempt {attemptCount}/{MAX_RETRY_ATTEMPTS})");
+
+                    var rmSession = new ResourceManager();
+                    _session = (MessageBasedSession)rmSession.Open(_resourceName);
+
+                    // Validate the connection
+                    if (await ValidateConnectionAsync())
+                    {
+                        _isConnected = true;
+                        Log.Information("Successfully connected and validated GPIB device connection");
+                        return;
+                    }
+
+                    // If validation fails, clean up and try again
+                    _session?.Dispose();
+                    _session = null;
+
+                    if (attemptCount < MAX_RETRY_ATTEMPTS)
+                    {
+                        // Add exponential backoff delay before retrying
+                        int delayMs = Math.Min(1000 * (int)Math.Pow(2, attemptCount - 1), 5000);
+                        await Task.Delay(delayMs);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    Log.Warning($"Connection attempt {attemptCount} failed: {ex.Message}");
+
+                    if (attemptCount < MAX_RETRY_ATTEMPTS)
+                    {
+                        // Add exponential backoff delay before retrying
+                        int delayMs = Math.Min(1000 * (int)Math.Pow(2, attemptCount - 1), 5000);
+                        await Task.Delay(delayMs);
+                    }
+                }
+            }
+
+            _isConnected = false;
+            throw new Exception($"Failed to connect to GPIB device after {MAX_RETRY_ATTEMPTS} attempts. Last error: {lastException?.Message}", lastException);
+        }
 
         public async Task StartContinuousReadAsync()
         {
