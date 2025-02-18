@@ -113,13 +113,13 @@ namespace GPIBKeithleyCurrentMeasurement
                         _isConnected = true;
                         Log.Information("Successfully connected and validated GPIB device connection");
 
-                        Log.Information("Clear any pending errors in the queue");
-                        // Clear any pending errors in the queue
-                        await Task.Run(() => {
-                            _session.RawIO.Write("*CLS\n");  // Clear status command
-                            _session.RawIO.Write("errorqueue.clear()\n"); // Clear error queue
-                        });
-                        Log.Information("Clear any pending errors in the queue, completed");
+                        //Log.Information("Clear any pending errors in the queue");
+                        //// Clear any pending errors in the queue
+                        //await Task.Run(() => {
+                        //    _session.RawIO.Write("*CLS\n");  // Clear status command
+                        //    _session.RawIO.Write("errorqueue.clear()\n"); // Clear error queue
+                        //});
+                        //Log.Information("Clear any pending errors in the queue, completed");
                         return;
                     }
 
